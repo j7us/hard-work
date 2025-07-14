@@ -1,0 +1,281 @@
+// ----------- ПЕРВЫЙ ПРИМЕР ------------------ //
+// -------------------------------------------- //
+
+
+// Вариант, находящийся в проекте. ЦС = 7
+
+private SendResult xzEvent(KfEvent entity, HashMap<String, Object> headers) throws SenderException {
+    try {
+        if (!syst.equals(entity.getFunctionalSubsystem())
+                || !isAllRateTemplateTypeMatch(entity)
+                || entity.getMessage() == null) {
+            return SendResult.success();
+        }
+
+        String objectId = entity.getObjectId();
+        Optional<StageEvent> stageEventOpt = stageEventRepository.findStageEventByObjectId(objectId);
+        if (stageEventOpt.isEmpty()) {
+            return new SendResult(ResultType.FAILED, aeEntityNotExist, aeEntityNotExistExceptionMessage);
+        }
+
+        StageEvent stageEvent = stageEventOpt.get();
+        if (!stageEvent.getFunctionalSubsystem().equals(syst) || stageEvent.getMessage() == null) {
+            return new SendResult(ResultType.FAILED, aeEntityNotExist, aeEntityNotExistExceptionMessage);
+        }
+
+        JsonNode jsonNode = objectMapper.readTree(stageEvent.getMessage());
+        if (!jsonNode.get("eventType").asText().equals("CREATE")) {
+            return new SendResult(ResultType.FAILED, aeEntityNotExist, aeEntityNotExistExceptionMessage);
+        }
+
+        String id = jsonNode.get("id").asText();
+        if (!StringUtils.hasText(id)) {
+            return new SendResult(ResultType.FAILED, aeEntityNotExist, aeEntityNotExistExceptionMessage);
+        }
+
+        String cvEvent = cvMapper.mapSVRequest(id);
+        httpClient.send(cvEvent, headers, invoiceResenderClient);
+        return SendResult.success();
+    } catch (JsonProcessingException e) {
+        log.error("Ошибка обработки", e);
+        return new SendResult(ResultType.FAILED, aeEntityNotExist, aeEntityNotExistExceptionMessage);
+    }
+}
+
+// Рефактор. ЦС = 2
+// Использованые приемы: добавление Optional, использвание filter и map, урезана логика с множеством if
+
+private SendResult cvCancelSendRefactor(KfEvent entity, HashMap<String, Object> headers) throws SenderException {
+    if (!needToSend(entity)) {
+        return SendResult.success();
+    }
+
+    SendResult sendResult = new SendResult(ResultType.FAILED, aeEntityNotExist, aeEntityNotExistExceptionMessage);
+    Optional<String> cv = extractCv(entity);
+
+    if (cv.isPresent()) {
+        httpClient.send(cv.get(), headers, invoiceResenderClient);
+        sendResult = SendResult.success();
+    }
+
+    return sendResult;
+}
+
+private boolean needToSend(KfEvent entity) {
+    return syst.equals(entity.getFunctionalSubsystem())
+        && entity.getMessage() != null
+        && isAllRateTemplateTypeMatch(entity);
+}
+
+private Optional<String> extractCv(KfEvent entity) {
+    Optional<StageEvent> stageEventOpt = stageEventRepository.findstageEventByObjectId(entity.getObjectId());
+
+    return stageEventOpt.filter(o -> o.getFunctionalSubsystem().equals(sbeSubsystem) || o.getMessage() == null)
+        .map(o -> JsonObjectMapper.readTree(o.getMessage()))
+        .filter(n -> n.get("eventType") != null && n.get("eventType").asText().equals("CREATE"))
+        .map(n -> cvMapper.mapSvRequest(n.get("cv")), asText());
+}
+
+
+
+// ----------- ВТОРОЙ ПРИМЕР ------------------ //
+// -------------------------------------------- //
+
+
+//Вариант в проекте. ЦС = 6
+
+public CompletableFuture<Provider> buildBuCode(EventDto event) {
+    Optional<Event> eventOpt = eventRepository.findByName(event.getName());
+    Optional<Integer> code = eventOpt.map(Event::getCode);
+
+    if(code.isPresent() && code.get() == 0) {
+        errorService.sendToError();
+        return process(eventOpt.get());
+    } else if(code.isPresent() && code.get() == 2) {
+        String number = event.get().getNumber();
+        if(number.startWith(TECH)) {
+            autoService.cancel(event);
+            autoStatusService.cancel(event);
+            return CompletableFuture.failedFuture(event);
+        } else {
+            errorService.sendToError();
+            return process(event);
+        }
+    } else if(code.isPresent() && code.get() == 1) {
+        autoStatusService.changeToNew(event);
+        return CompletableFuture.completedFuture(new SuccessEvent(event));
+    } else if(code.isPresent() && (code.get() == 10 ||code.get() == 20 || code.get() == 30)) {
+        autoExecutorService.changeToError(event.get());
+        return CompletableFuture.completedFuture(new SuccessEvent(event));
+    }
+
+    FailedEvent failedEvent = failedEventTypeBuilder.create();
+    return CompletableFuture.failedFuture(failedEvent);
+}
+
+
+// Рефактор. ЦС = 1
+// Использованые приемы: урезана логика с множеством if else, добавлен полиморфизм типов и класс с перегрузкой метода для их обработки.
+// Класс с ad-hoc полиморфизмом приведен в сокращенном виде, чтобы не занимать много места в тексте.
+
+
+Map<Integer, Function<Event, EventResult> resultTypesByCode = Map.of(
+    0, ErrorType::new,
+    2, CancelType::new,
+    1, NewType::new
+);
+
+public CompletableFuture<Provider> buildBuCode(EventDto event) {
+    Optional<Event> eventOpt = eventRepository.findByName(event.getName());
+
+
+    EventType type = eventOpt.map(e -> {
+        Function<Event, EventResult> typeMapper = e.getCode() == null
+            ? NullType::new
+            : Optional.ofNullable(resultTypesByCode.get(e.getCode()).orElse(NewType::new);
+        return typeMapper.apply(e);
+    })
+
+    return eventCodeService.processEvent(type)
+}
+
+public class EventCodeService {
+    public CompletableFuture<Provider> processEvent(ErrorType errorTypeEvent) {
+        return error(event);
+    }
+
+    public CompletableFuture<Provider> processEvent(CancelType cancelTypeEvent) {
+            String number = event.get().getNumber();
+            return number.startWith(TECH)
+                ? cancel(event)
+                : error(event);
+    }
+
+    private CompletableFuture<Provider> cancel(Event event) {
+        autoService.cancel(event);
+        autoStatusService.cancel(event);
+        return CompletableFuture.failedFuture(event);
+    }
+
+    private CompletableFuture<Provider> error(Event event) {
+        errorService.sendToError();
+        return process(event);
+    }
+
+    ...
+}
+
+
+
+// ----------- ТРЕТИЙ ПРИМЕР ------------------ //
+// -------------------------------------------- //
+
+
+// Вариант, находящийся в проекте. ЦС = 5
+
+private CompletableFuture<Execution> processTransferDepositToCardWithoutCompletion(Execution execution, Payment payment, String reqId) {
+    return retryableDepositToCardService.sendRequest(execution, reqId)
+        .thenCompose(depositAutopays -> {
+            MdcUtils.setSessionAndSessionLogID(execution.getId(), execution.getLogId());
+            Optional<DepositAutopay> depositAutopayOpt = Optional.ofNullable(depositAutopays)
+                .flatMap(list -> list.stream().findFirst());
+            Optional<Integer> statusCodeOpt = depositAutopayOpt.map(DepositAutopay::getStatus)
+                .map(DepositAutopay.Status::getCode);
+            Optional<String> statusDescOpt = depositAutopayOpt.map(DepositAutopay::getStatus)
+                .map(DepositAutopay.Status::getDesc);
+            String statusDesc = statusDescOpt.orElse("");
+
+            if (StatusCode.CODE_SUCCESS == statusCodeOpt.orElse(StatusCode.CODE_DEFAULT)) {
+                execution.getPaymentStatus().setExecutionCondition(
+                    execution.getExecutionCondition());
+                execution.getPaymentStatus().setExecutionCondition(
+                    execution.getExecutionCondition());
+                if (!StringUtils.isNotEmpty(execution.getPaymentPayload())) {
+                    log.warn("Ответ успешен, при этом отсутствует executionPayload, при этом ошибка вызова IC2P. Требуется повторный вызов");
+                    executionStatusService.changePaymentStatusToError(
+                        execution, StatusCode.CODE_DEFAULT,
+                        ExecutionStatusEnum.TRANSFER_CARD_TO_CARD_CLOSE_EXECUTION,
+                        ErrorCode.EXECUTION_CONDITION_NOT_RECEIVED);
+                    return CompletableFuture.completedFuture(execution);
+                }
+
+                return CompletableFuture.completedFuture(execution);
+            } else if (StringUtils.isEmpty(payment.getPayLoad())
+                    || statusCodeOpt.orElse(StatusCode.CODE_DEFAULT) == StatusCode.CODE_DEFAULT) {
+                log.warn("Ответ не успешен, при этом ошибка вызова IC2P. Требуется повторный вызов");
+                executionStatusService.changePaymentStatusToError(
+                    execution, StatusCode.CODE_DEFAULT,
+                    ExecutionStatusEnum.TRANSFER_CARD_TO_CARD_CLOSE_EXECUTION,
+                    String.format("statusCode = %s в ответе из DepositAutopay", statusCodeOpt));
+                return CompletableFuture.completedFuture(execution);
+            } else if (depositAutopayOpt.isPresent() && depositAutopayOpt.get().getRetryCount() < MAX_RETRY_COUNT) {
+                log.warn("Ответ не успешен. Требуется повторный вызов. Текущее количество попыток вызова DepositAutopay: {}",
+                    depositAutopayOpt.get().getRetryCount());
+                return retryableDepositToCardService.sendRequest(execution, reqId);
+            } else {
+                log.warn("Ответ не успешен окончательно. Получен statusCode = {}, statusDesc = {} из DepositAutopay",
+                    statusCodeOpt, statusDesc);
+                executionStatusService.changePaymentStatusToError(
+                    execution, StatusCode.CODE_DEFAULT,
+                    ExecutionStatusEnum.TRANSFER_CARD_TO_CARD_CLOSE_EXECUTION,
+                    statusDesc);
+                return CompletableFuture.completedFuture(execution);
+            }
+        }).exceptionally(ex -> {
+            Throwable cause = (ex instanceof CompletionException) ? ex.getCause() : ex;
+            log.error("Ошибка при вызове DepositAutopay", cause);
+            executionStatusService.changePaymentStatusToError(
+                execution, StatusCode.CODE_SW_TECHNICAL_ERROR,
+                ExecutionStatusEnum.TRANSFER_CARD_TO_CARD_CLOSE_EXECUTION,
+                String.format("Ошибка при вызове DepositAutopay: %s", cause.getMessage()));
+            return execution;
+        });
+}
+
+// Рефактор. ЦС = 2
+// Использованые приемы: добавление Optional, использвание filter и map, урезана логика с множеством if
+
+
+private CompletableFuture<Execution> processTransferDepositToCardWithoutCompletion(Execution execution, Payment payment, String reqId) {
+    return retryableDepositToCardService.sendRequest(execution, reqId)
+                    .thenCompose(depositAutopays -> {
+                        MdcUtils.setSessionAndSessionLogID(execution.getId(), execution.getLogId());
+                        Optional<DepositAutopay> depositAutopayOpt = Optional.ofNullable(depositAutopays)
+                                .flatMap(list -> list.stream().findFirst());
+                        Optional<Integer> statusCodeOpt = depositAutopayOpt.map(DepositAutopay::getStatus)
+                                .map(DepositAutopay.Status::getCode);
+                        String statusDesc = statusDescOpt.orElse("");
+
+                        if (StatusCode.CODE_SUCCESS == statusCodeOpt.orElse(StatusCode.CODE_DEFAULT)
+                                && StringUtils.isNotEmpty(execution.getPaymentPayload())) {
+                            execution.getPaymentStatus().setExecutionCondition(execution.getExecutionCondition());
+                        }
+
+                        return haveRetry(depositAutopayOpt)
+                            ? retryableDepositToCardService.sendRequest(execution, reqId)
+                            : CompletableFuture.completedFuture(execution);
+                    }).exceptionally(ex -> {
+            Throwable cause = (ex instanceof CompletionException) ? ex.getCause() : ex;
+            log.error("Ошибка при вызове DepositAutopay", cause);
+            executionStatusService.changePaymentStatusToError(
+                execution, StatusCode.CODE_SW_TECHNICAL_ERROR,
+                ExecutionStatusEnum.TRANSFER_CARD_TO_CARD_CLOSE_EXECUTION,
+                String.format("Ошибка при вызове DepositAutopay: %s", cause.getMessage()));
+            return execution;
+        });
+}
+
+private boolean haveRetry(Optional<DepositAutopay> depositAutopayOpt) {
+    return depositAutopayOpt.isPresent() && depositAutopayOpt.get().getRetryCount() < MAX_RETRY_COUNT;
+}
+
+
+
+// ------------------ ОТЧЕТ ----------------- //
+Данная тема сильно актуальна, т.к на данный момент приходится работать с наследуемыми проектами или проектами, в которых приходится делать фичи "на скорость".
+С какими сложностями я столкнулся: было немного сложно понять разницу между снижением цикломатической сложности
+и рефактором с выносом if в методы, сложно было понять разницу между несколькими if и использованием filter в функциональном стиле
+и сложно было придерживаться соотношения один-к-одному между аргументами функции и телами условий, последнее к сожалению до сих пор не получается.
+В данных примерах не нашлось место дженерикам, но в нескольких местах рабочих проектов на опережение использовались дженерализованные функции, чтобы метод был сразу проще.
+Перегрузки методов уже до этого активно использовались, но с использованием типов-состоянии это кажется самым лучшим вариантом,
+о котором не задумывался ранее. Также теперь стараюсь чаще использовать Optional с функцилнальными методами filter и map.

@@ -233,7 +233,7 @@ private CompletableFuture<Execution> processTransferDepositToCardWithoutCompleti
 }
 
 // Рефактор. ЦС = 2
-// Использованые приемы: добавление Optional, использвание filter и map, урезана логика с множеством if
+// Использованые приемы: избавился от if else, использован тернарный оператор.
 
 
 private CompletableFuture<Execution> processTransferDepositToCardWithoutCompletion(Execution execution, Payment payment, String reqId) {

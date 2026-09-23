@@ -1,0 +1,93 @@
+Рефакторинг ошибок:
+1) Методы, которые используются только в тестах
+Был найден метод, удаляющий отзыв по id, использовался только в тестах, код от 2021 в проекте.
+
+@Test
+void feedbackCreateTest() {
+...
+var feedback = feedbackService.createFeedback(feedbackInfo)
+assertThat(feedback.getCustomerName).equals("Sasha");
+deleteFeedback(feedback.getId());
+}
+
+На функциональный тест навесил аннотацию transactional, чтобы в конце теста откатывались созданные строки
+
+@Test
+@Transactional
+void feedbackCreateTest() {
+...
+var feedback = feedbackService.createFeedback(feedbackInfo)
+assertThat(feedback.getCustomerName).equals("Sasha");
+}
+
+2) Цепочки методов
+Во время создания отзыва была очень длинная цепочка на получение уточненных данных по пользователю
+
+FeedbackDao createFeedback(FeedbackInfo feedbackInfo) {
+    var customer = customerService.getCustomer(feedbackInfo.getCustomerName());
+}
+
+Customer getCustomer(String customerName) {
+    var customer = customerClient.getCustomer(customerName);
+}
+
+Customer getCustomer(String customerName) {
+    return customerFeign.GetApiCustomer(customerName);
+}
+
+Убрал лишнюю прокладку в виде клиента и обращался напрямую через feign
+
+Customer getCustomer(String customerName) {
+    var customer = customerFeign.GetApiCustomer(customerName);
+}
+
+3) У метода слишком большой список параметров.
+ReplyDto updateReply(Feedback feedback, UUID replyId, boolean updated, String text, String moderatorApprove) {
+...
+}
+
+параметры были сжаты в один объект нового класса
+ReplyDto updateReply(ReplyUpdateView replyUpdate) {
+...
+}
+
+4) Когда несколько методов используются для решения одной и той же проблемы
+Ранее был переход на graphql с rest, но один эндпоинт остался в использовании, из-за чего появился метод от резолвера graphql
+
+Order saveOrder(CreatedOrder createdOrder) {
+    Order order = orderDao.findById(createdOrder.getId());
+
+    if (order != null) {
+        Order updatedOrder = OrderMapper.updateOrder(order, createdOrder);
+        return orderDao.save(updatedOrder);
+
+    }
+}
+
+Order updateOrder(CreatedOrder createdOrder) {
+    Order order = orderDao.findById(createdOrder.getId());
+
+    if (order == null) {
+        throw new NoOrderException();
+    }
+
+    return orderDao.save(updatedOrder);
+}
+
+В результате метод updateOrder был удален и rest перенаправляется на метод saveOrder
+
+5) Чрезмерный результат
+Был метод, который использовал mapper для маппинга в дто и отдавал его в контроллер, но при этом контроллер был переделан
+и больше ничего не отдает
+
+FeedbackUpdateInfo updateFeedback() {
+...
+return mapper.toDto(feedback);
+}
+
+был убран маппер и установлен void в качестве ответа
+void updateFeedback() {
+feedBackDao.updateFeedback();
+}
+
+

@@ -1,0 +1,56 @@
+1)
+Было:
+var blockedDate = orderItemRep.getByIdAndCustomer(id, customer).getCreatedDate().minusHours(getDefaultBlockedHours());
+Сразу получали объект из базы данных, брали поле с датой и временем и там же получали время вычитания.
+
+Стало:
+Long blockedHours = getDefaultBlockedHours();
+OrderITem orderItem = orderItemRep.getByIdAndCustomer(id, customer);
+LocalDateTime blockedDate = orderItem.getCreatedDate().minusHours(blockedHours);
+
+2)
+Было:
+if (experimentProvider.getBoolValue(Experiment.POPUP_AB_TEST) || blackListService.checkId(seller.getId())) {}
+В одном if проверялось наличие в черном списке id с походом в бд и рест запрос для проверки аб теста.
+
+Стало:
+boolean isAbTestOn = experimentProvider.getBoolValue(Experiment.POPUP_AB_TEST);
+boolean isBlockedByBlackList = blackListService.checkId(seller.getId();
+
+if(isAbTestOn || isBlockedByBlackList) {}
+
+3)
+Было:
+log.debug("Feedback={} for order {} is in status {} need to check update", feedback.getId(), feedback.getOrder.getId(), feedback.getStatus().getName());
+Было много получения вложенных объектов и их полей, вынес заранее их в отдельные переменные.
+
+Стало:
+log.debug("Feedback={} for order {} is in status {} need to check update", feedbackId, orderId, status);
+
+4)
+Было:
+var data = skuIds.stream()
+    .map(id -> CheckDynamic.builder()
+        .skuIds(id)
+        .hasDiscount(calculateDiscount.canCalculate(id) && !skuBlackList.contains(id))
+        .build())
+    .toList();
+В методе сразу находилась и логика вычисления возможна ли скидка для данного id или нет
+
+Стало:
+var data = skuIds.stream()
+    .map(id -> CheckDynamic.builder()
+        .skuIds(id)
+        .hasDiscount(discountExist(id))
+        .build())
+    .toList();
+
+5)
+Было:
+productReviewsPhotosListDto.setAmount(Math.max(0, feedbackImageList.getTotalElements() - (long) (pageable.pageNumber() + 1) * pageable.getPageSize()));
+Вычисления вставлены сразу в set метод, очень сложно разобрать код
+
+Стало:
+long elementsToSend = feedbackImageList.getTotalElements() - (long) (pageable.pageNumber() + 1) * pageable.getPageSize();
+long finalElementCount = Math.max(0, elementsToSend);
+productReviewsPhotosListDto.setAmount(finalElementCount);

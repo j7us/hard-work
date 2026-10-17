@@ -17,6 +17,7 @@
         <module>mixin</module>
         <module>refactor</module>
         <module>srp-row</module>
+        <module>class-and-app-level</module>
     </modules>
 
     <properties>

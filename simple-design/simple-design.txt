@@ -1,0 +1,124 @@
+-- Избавляться от точек генерации исключений
+
+1) Класс получения и создания пользовательских и кастомных адресов
+
+public class AddressInfo {
+    // Метод, который позволяет сохранить найденный ранее адрес для пользователя
+    public UUID saveAddress(UUID addressId, int userId) {...}
+
+    //Метод, который ищет в системе id определенного адреса, не обязательно пользователя
+    public UUID findAddress(String addressQuery) {...}
+
+    //Метод, который ищет адрес из тех, которые есть у пользователя
+    public UUID findUserAdress(String addressQuery) {...}
+
+  }
+
+Чтобы пользоваться адресом надо сначала его найти и, если 
+у пользователя нет такого адресса, то добавить ему
+
+Исправленный вариант:
+
+public interface AddressInfo {
+    
+    // Метод, который возвращает существующий или создает новый адрес для пользователя
+    public UUID createUserAddress(String addressQuery, int userId) {...}
+    
+    // Метод, который определяет есть ли у пользователя такой адрес
+    public boolean isUserAddress(String addressQuery) {...}
+  }
+
+Так как без сохранения у пользователя адрес нельзя было использовать в программе (вызывалось исключение),
+то мы убрали возможность просто получать id адреса.
+
+2) Класс получения информации о доставке
+
+public interface DeliveryFullInfo {
+    DeliveryInfo getDefaultDeliveryInfoByCartAndDate(UUID cartId, LocalDate deliveryDate);
+
+    DeliverySlots getDefaultDeliverySlots(UUID deliveryId);
+
+    DeliveryInfo getCncDeliveryInfoByCartAndDate(UUID cartId, LocalDate deliveryDate);
+
+    DeliverySlots getCncDeliverySlots(UUID deliveryId);
+}
+
+Класс позволяет получить информацию о доставке(стоимость, примерная длительность и тд) и о временных слотах, 
+при этом там методы для двух способов доставки.
+
+public interface DeliveryInfo {
+    DeliveryInfo getDeliveryInfoByCartAndDate(UUID cartId, LocalDate deliveryDate);
+    DeliverySlots getDeliverySlots(UUID deliveryId);
+  }
+
+public interface CncDeliveryInfo extends DeliveryInfo {}
+
+public interface DefaultDeliveryInfo extends DeliveryInfo {}
+
+В данном случае изначальный класс содержал методы, которые кажется легко разделялись на несколько типов,
+которые могут наследовать один абстрактный класс, при этом не будет возможности попробовать получить слоты доставки для другого
+способа доставки, попытавшись передать туда id UUID.
+
+-- Отказаться от дефолтных конструкторов без параметров
+1) Технический класс с выбором источника чтения 
+public class PromotionCache {
+    public void setCacheSource(String cacheName) {}
+
+    public Promotion getPromotion(Price price, User userInfo) {}
+  }
+
+В данном случае класс мог динамически выбирать источник кэша, но на самом деле эта функция использовалась 
+только при запуске приложения, поэтому предлагается такой вариант:
+
+public class PromotionCache {
+    public PromotionCache(String cacheType) {}
+
+    public Promotion getPromotion(Price price, User userInfo) {}
+  }
+
+2) Информация о будущем заказе клиента
+public class ClientCartInfo {
+    void setAddressInfo(Address address) {...}
+    void setCartCreateInfo(CartInfo cart) {...}
+    void setPaymentInfo(Payment payment) {...}
+    void DeliveryInfo(DeliveryInfo deliveryInfo) {...}
+  }
+
+В даном случае все поля не заполняются сразу, поэтому добавлено много отдельных методов set, но при этом 
+переход на этап выбора доставки и оплаты невозможен без заполнения адреса и информации о корзине, поэтому предлагается
+такой иммутабельный вариант:
+
+
+
+public class ClientCartInfo {
+    public ClientCartInfo(Address address, CartInfo cart) {...}
+    public ClientCartInfo(Address address, CartInfo cart, Payment payment, DeliveryInfo deliveryInfo) {...}
+  }
+
+-- Избегать увлечения примитивными типами данных
+
+1)Поиск доступных пвз 
+public class PvzService {
+    public findAllPvzInRegion(int count, long lLan, long lLat, long rLan, long rLat) {...}
+  }
+
+В данном примере мы ищем пвз в определенной области, квадрат задается координатами его его левого верхнего
+и правого нижнего угла.
+
+public class PvzService {
+    public findAllPvzInRegion(int count, CoordinatSquare) {...}
+  }
+
+2)Анализ дополнительной скидки 
+public class DicePromotion {
+    public Promotion getFreeMarketPromotion(BigDecimal beforePrice, LocalDateTime lastPriceChangeDate, long priceTransaction, sellerAccountId) {...}
+  }
+
+Данный класс ищет дополнительную скидку, но для этого ему нужна информация о последней использованной скидке,
+когда она задавалась, кем, какая была цена. Все это относится к одной предметной области - последней цене,
+поэтому предлагаются такие изменения 
+
+public class DicePromotion {
+    public Promotion getFreeMarketPromotion(LastPriceInfo lastPrice) {...}
+  }
+

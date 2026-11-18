@@ -18,6 +18,7 @@
         <module>refactor</module>
         <module>srp-row</module>
         <module>class-and-app-level</module>
+        <module>workabstraction</module>
     </modules>
 
     <properties>

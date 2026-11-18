@@ -1,0 +1,101 @@
+1) Получение флага Growthbook
+
+// Было
+public Discount evaluatePriceWithDiscount(SellPrice price) {
+    Growthbook gb = growthbookAdapter.pullFeatures(apiKey);
+    JsonObject gbValue = gb.featureIsOn(DISCOUNT_KEY);
+    Discount ds = discountMapper.map(gbValue);
+
+    if (ds.getSourcePrice().equals(price.getValue())) {
+        return "";
+    }
+
+    return ds;
+}
+
+// Стало
+public Discount evaluatePriceWithDiscount(SellPrice price) {
+    Discount ds = featureHolder.getFeatureValue(DISCOUNT_KEY, val -> discountMapper.map(gbValue));
+
+    if (ds.getSourcePrice().equals(price.getValue())) {
+        return "";
+    }
+
+    return ds;
+}
+
+// В данном случае мы вынесли взаимодействие с ГБ в более сильную абстракцию с возможностью выполнения дальнейшего маппинга,
+// в случае получения строк или булевого значения маппинг также можно передать как Function.identity()
+
+
+
+2) Выбор обработчиков скидочного процесса
+
+// Было
+public Discount calculateDiscount(DiscountRequest request) {
+    List<DiscountHandler> orderedPromoters = new ArrayList<>(promoters);
+    orderedPromoters.sort(
+        Comparator.comparingInt(Promoter::getPriority).reversed()
+    );
+
+    for (Promoter promoter : promoters) {
+        if (promoter.supports(request.getType())) {
+            return promoter.calculate(request);
+        }
+    }
+
+    return Discount.of();
+}
+
+// Стало
+
+public Discount calculateDiscount(DiscountRequest request) {
+    Promoter promoter = promotionService.getPriorityPromoter(request.getType())
+
+    if (promoter != null) {
+        return promoter.calculate(request);
+    }
+
+    return Discount.of();
+}
+
+// В данном случае мы скрыли логику выбора приоритетного промоутера скидок для скидочного запроса.
+
+
+3) Замер времени запроса
+
+// Было
+private BigDecimal getOverdueBalance(@NonNull CustomerInfo customer) {
+    Timer.Sample sample = Timer.start(meterRegistry);
+    Exception exception = null;
+
+    try {
+        PaymartMfoOverdueBalanceRs rs = paymartMfoCacheService.getUserOverdueBalance(customer.getPhoneNumber());
+        return rs.getOverdueBalance();
+    } catch (Exception e) {
+        log.warn("Error getting user overdue balance for user {}", customer.getPhoneNumber(), e);
+        exception = e;
+        return null;
+    } finally {
+        sample.stop(
+                Timer.builder("installment.getwidgetgql.getoverduebalance.operations")
+                     .tag("result", exception != null ? "ERROR" : "SUCCESS")
+                     .register(meterRegistry)
+        );
+    }
+}
+
+// Стало
+private BigDecimal getOverdueBalance(@NonNull CustomerInfo customer) {
+    metricFacade.withTimeMetric(
+        "installment.getwidgetgql.getoverduebalance.operations",
+        () -> paymartMfoCacheService.getUserOverdueBalance(customer.getPhoneNumber()).getOverdueBalance(),
+        () -> null
+    );
+}
+
+// Здесь скрыли лишние операции try/catch и создание таймера, в сам метод мы передаем название метрики, само действие
+// и действие в случае ошибки
+
+
+
